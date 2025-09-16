@@ -23,6 +23,7 @@
 
 #include <parquet/arrow/schema.h>
 
+#include "iceberg/name_mapping.h"
 #include "iceberg/schema.h"
 #include "iceberg/schema_util.h"
 
@@ -61,5 +62,13 @@ std::vector<int32_t> SelectedColumnIndices(const SchemaProjection& projection);
 /// \param root_node The root node of the Parquet schema.
 /// \return True if the Parquet schema has field IDs, false otherwise.
 bool HasFieldIds(const ::parquet::schema::NodePtr& root_node);
+
+/// \brief Create a new Parquet node with field IDs from name mapping.
+///
+/// \param original_node The original Parquet node.
+/// \param mapping The name mapping to apply field IDs from.
+/// \return A new Parquet node with field IDs applied.
+Result<::parquet::schema::NodePtr> MakeParquetNodeWithFieldIds(
+    const ::parquet::schema::NodePtr& original_node, const NameMapping& mapping);
 
 }  // namespace iceberg::parquet

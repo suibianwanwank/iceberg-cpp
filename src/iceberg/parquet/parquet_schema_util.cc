@@ -28,6 +28,7 @@
 
 #include "iceberg/constants.h"
 #include "iceberg/metadata_columns.h"
+#include "iceberg/name_mapping.h"
 #include "iceberg/parquet/parquet_schema_util_internal.h"
 #include "iceberg/result.h"
 #include "iceberg/schema_util_internal.h"
@@ -408,6 +409,107 @@ std::vector<int32_t> SelectedColumnIndices(const SchemaProjection& projection) {
   }
   std::ranges::sort(column_ids);
   return column_ids;
+}
+
+namespace {
+
+class FieldNameScope {
+ public:
+  FieldNameScope(std::vector<std::string>& names, const std::string& name) : names_(names) {
+    names_.push_back(name);
+  }
+  ~FieldNameScope() { names_.pop_back(); }
+
+ private:
+  std::vector<std::string>& names_;
+};
+
+Result<MappedFieldConstRef> FindMappedField(const NameMapping& mapping,
+                                            const std::vector<std::string>& names) {
+  auto field_opt = mapping.Find(names);
+  if (!field_opt.has_value()) {
+    return InvalidSchema("Field '{}' not found in name mapping", names.back());
+  }
+
+  const MappedField& field = field_opt.value().get();
+  if (!field.field_id.has_value()) {
+    return InvalidSchema("Field ID is missing for field '{}' in name mapping",
+                         names.back());
+  }
+
+  return field_opt.value();
+}
+
+Result<::parquet::schema::NodePtr> MakeParquetNodeWithFieldIds(
+    const ::parquet::schema::NodePtr& original_node, const NameMapping& mapping,
+    std::vector<std::string>& names);
+
+::parquet::schema::NodePtr MakeNodeWithFieldId(const ::parquet::schema::NodePtr& original_node,
+                                               int32_t field_id) {
+  if (original_node->is_group()) {
+    auto group_node = internal::checked_pointer_cast<::parquet::schema::GroupNode>(original_node);
+    std::vector<::parquet::schema::NodePtr> fields;
+    for (int i = 0; i < group_node->field_count(); ++i) {
+      fields.push_back(group_node->field(i));
+    }
+    return ::parquet::schema::GroupNode::Make(
+        group_node->name(), group_node->repetition(), fields,
+        nullptr, field_id);
+  } else {
+    auto primitive_node = internal::checked_pointer_cast<::parquet::schema::PrimitiveNode>(original_node);
+    return ::parquet::schema::PrimitiveNode::Make(
+        primitive_node->name(), primitive_node->repetition(),
+        primitive_node->logical_type(), primitive_node->physical_type(),
+        primitive_node->type_length(), field_id);
+  }
+}
+
+Result<::parquet::schema::NodePtr> MakeParquetNodeWithFieldIds(
+    const ::parquet::schema::NodePtr& original_node, const NameMapping& mapping,
+    std::vector<std::string>& names) {
+  if (original_node->field_id() >= 0) {
+    return original_node;
+  }
+
+  if (original_node->is_group()) {
+    auto group_node = internal::checked_pointer_cast<::parquet::schema::GroupNode>(original_node);
+    std::vector<::parquet::schema::NodePtr> new_fields;
+    new_fields.reserve(group_node->field_count());
+
+    for (int i = 0; i < group_node->field_count(); i++) {
+      const auto& child_node = group_node->field(i);
+      FieldNameScope guard(names, child_node->name());
+      
+      ICEBERG_ASSIGN_OR_RAISE(
+          auto new_child_node,
+          MakeParquetNodeWithFieldIds(child_node, mapping, names));
+      new_fields.push_back(std::move(new_child_node));
+    }
+
+    if (names.empty()) {
+      return ::parquet::schema::GroupNode::Make(
+          group_node->name(), group_node->repetition(), std::move(new_fields),
+          nullptr);
+    }
+    ICEBERG_ASSIGN_OR_RAISE(auto mapped_field, FindMappedField(mapping, names));
+    return ::parquet::schema::GroupNode::Make(
+        group_node->name(), group_node->repetition(), std::move(new_fields),
+        nullptr, mapped_field.get().field_id.value());
+  }
+  if (names.empty()) {
+    return original_node;
+  }
+
+  ICEBERG_ASSIGN_OR_RAISE(auto mapped_field, FindMappedField(mapping, names));
+  return MakeNodeWithFieldId(original_node, mapped_field.get().field_id.value());
+}
+
+}  // namespace
+
+Result<::parquet::schema::NodePtr> MakeParquetNodeWithFieldIds(
+    const ::parquet::schema::NodePtr& original_node, const NameMapping& mapping) {
+  std::vector<std::string> names;
+  return MakeParquetNodeWithFieldIds(original_node, mapping, names);
 }
 
 bool HasFieldIds(const ::parquet::schema::NodePtr& node) {

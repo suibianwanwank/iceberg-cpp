@@ -24,5 +24,6 @@
 namespace iceberg {
 
 constexpr std::string_view kParquetFieldIdKey = "PARQUET:field_id";
+constexpr std::string_view kNameMappingProperty = "schema.name-mapping.default";
 
 }  // namespace iceberg

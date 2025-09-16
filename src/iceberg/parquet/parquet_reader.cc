@@ -59,18 +59,38 @@ Result<std::shared_ptr<::arrow::io::RandomAccessFile>> OpenInputStream(
 }
 
 Result<SchemaProjection> BuildProjection(::parquet::arrow::FileReader* reader,
-                                         const Schema& read_schema) {
+                                         const Schema& read_schema,
+                                         const ReaderOptions& options) {
   auto metadata = reader->parquet_reader()->metadata();
 
-  if (!HasFieldIds(metadata->schema()->schema_root())) {
-    // TODO(gangwu): apply name mapping to Parquet schema
-    return NotImplemented("Applying name mapping to Parquet schema is not implemented");
-  }
-
   ::parquet::arrow::SchemaManifest schema_manifest;
-  ICEBERG_ARROW_RETURN_NOT_OK(::parquet::arrow::SchemaManifest::Make(
-      metadata->schema(), metadata->key_value_metadata(), reader->properties(),
-      &schema_manifest));
+  
+  if (!HasFieldIds(metadata->schema()->schema_root())) {
+    if (options.name_mapping) {
+      // For now, we create a temporary in-memory representation with field IDs
+      // and use the existing schema manifest creation path.
+      // This is a simplified approach that works with the current Arrow Parquet API.
+      ICEBERG_ASSIGN_OR_RAISE(
+          auto schema_with_field_ids,
+          MakeParquetNodeWithFieldIds(metadata->schema()->schema_root(), 
+                                     *options.name_mapping));
+      
+      // Create a temporary schema descriptor using the enhanced schema
+      // Note: This is a workaround since we can't easily modify the existing schema
+      auto temp_schema = std::make_shared<::parquet::SchemaDescriptor>();
+      temp_schema->Init(std::static_pointer_cast<::parquet::schema::GroupNode>(schema_with_field_ids));
+      
+      ICEBERG_ARROW_RETURN_NOT_OK(::parquet::arrow::SchemaManifest::Make(
+          temp_schema.get(), metadata->key_value_metadata(), reader->properties(),
+          &schema_manifest));
+    } else {
+      return InvalidArgument("Parquet file has no field IDs and no name mapping provided");
+    }
+  } else {
+    ICEBERG_ARROW_RETURN_NOT_OK(::parquet::arrow::SchemaManifest::Make(
+        metadata->schema(), metadata->key_value_metadata(), reader->properties(),
+        &schema_manifest));
+  }
 
   // Leverage SchemaManifest to project the schema
   ICEBERG_ASSIGN_OR_RAISE(auto projection, Project(read_schema, schema_manifest));
@@ -132,7 +152,7 @@ class ParquetReader::Impl {
         pool_, std::move(file_reader), arrow_reader_properties, &reader_));
 
     // Project read schema onto the Parquet file schema
-    ICEBERG_ASSIGN_OR_RAISE(projection_, BuildProjection(reader_.get(), *read_schema_));
+    ICEBERG_ASSIGN_OR_RAISE(projection_, BuildProjection(reader_.get(), *read_schema_, options));
 
     return {};
   }

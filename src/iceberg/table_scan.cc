@@ -22,11 +22,16 @@
 #include <cstring>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "iceberg/arrow_c_data.h"
+#include "iceberg/constants.h"
 #include "iceberg/file_reader.h"
+#include "iceberg/json_internal.h"
 #include "iceberg/manifest_entry.h"
 #include "iceberg/manifest_list.h"
 #include "iceberg/manifest_reader.h"
+#include "iceberg/name_mapping.h"
 #include "iceberg/schema.h"
 #include "iceberg/schema_field.h"
 #include "iceberg/snapshot.h"
@@ -150,11 +155,19 @@ int64_t FileScanTask::estimated_row_count() const { return data_file_->record_co
 Result<ArrowArrayStream> FileScanTask::ToArrow(
     const std::shared_ptr<FileIO>& io, const std::shared_ptr<Schema>& projected_schema,
     const std::shared_ptr<Expression>& filter) const {
+  return ToArrow(io, projected_schema, filter, nullptr);
+}
+
+Result<ArrowArrayStream> FileScanTask::ToArrow(
+    const std::shared_ptr<FileIO>& io, const std::shared_ptr<Schema>& projected_schema,
+    const std::shared_ptr<Expression>& filter,
+    const std::shared_ptr<NameMapping>& name_mapping) const {
   const ReaderOptions options{.path = data_file_->file_path,
                               .length = data_file_->file_size_in_bytes,
                               .io = io,
                               .projection = projected_schema,
-                              .filter = filter};
+                              .filter = filter,
+                              .name_mapping = name_mapping};
 
   ICEBERG_ASSIGN_OR_RAISE(auto reader,
                           ReaderFactoryRegistry::Open(data_file_->file_format, options));
@@ -240,6 +253,17 @@ Result<std::unique_ptr<TableScan>> TableScanBuilder::Build() {
   } else if (!column_names_.empty()) {
     return InvalidArgument(
         "Cannot specify column names when a projected schema is provided");
+  }
+
+  // Parse name mapping from table properties if available
+  const auto& properties = table_metadata->properties;
+  if (auto it = properties.find(std::string(kNameMappingProperty)); it != properties.end()) {
+    try {
+      auto json = nlohmann::json::parse(it->second);
+      ICEBERG_ASSIGN_OR_RAISE(context_.name_mapping, NameMappingFromJson(json));
+    } catch (const std::exception& e) {
+      return InvalidArgument("Invalid name mapping JSON in table properties: {}", e.what());
+    }
   }
 
   return std::make_unique<DataTableScan>(std::move(context_), file_io_);

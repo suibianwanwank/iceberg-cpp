@@ -67,6 +67,20 @@ class ICEBERG_EXPORT FileScanTask : public ScanTask {
                                    const std::shared_ptr<Schema>& projected_schema,
                                    const std::shared_ptr<Expression>& filter) const;
 
+  /**
+   * \brief Returns a C-ABI compatible ArrowArrayStream to read the data for this task.
+   *
+   * \param io The FileIO instance for accessing the file data.
+   * \param projected_schema The projected schema for reading the data.
+   * \param filter Optional filter expression to apply during reading.
+   * \param name_mapping Optional name mapping for schema evolution compatibility.
+   * \return A Result containing an ArrowArrayStream, or an error on failure.
+   */
+  Result<ArrowArrayStream> ToArrow(const std::shared_ptr<FileIO>& io,
+                                   const std::shared_ptr<Schema>& projected_schema,
+                                   const std::shared_ptr<Expression>& filter,
+                                   const std::shared_ptr<NameMapping>& name_mapping) const;
+
  private:
   /// \brief Data file metadata.
   std::shared_ptr<DataFile> data_file_;
@@ -82,6 +96,8 @@ struct TableScanContext {
   std::shared_ptr<Schema> projected_schema;
   /// \brief Filter expression to apply.
   std::shared_ptr<Expression> filter;
+  /// \brief Name mapping for schema evolution compatibility.
+  std::shared_ptr<NameMapping> name_mapping;
   /// \brief Whether the scan is case-sensitive.
   bool case_sensitive = false;
   /// \brief Additional options for the scan.
