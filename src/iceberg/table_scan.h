@@ -76,10 +76,10 @@ class ICEBERG_EXPORT FileScanTask : public ScanTask {
    * \param name_mapping Optional name mapping for schema evolution compatibility.
    * \return A Result containing an ArrowArrayStream, or an error on failure.
    */
-  Result<ArrowArrayStream> ToArrow(const std::shared_ptr<FileIO>& io,
-                                   const std::shared_ptr<Schema>& projected_schema,
-                                   const std::shared_ptr<Expression>& filter,
-                                   const std::shared_ptr<NameMapping>& name_mapping) const;
+  Result<ArrowArrayStream> ToArrow(
+      const std::shared_ptr<FileIO>& io, const std::shared_ptr<Schema>& projected_schema,
+      const std::shared_ptr<Expression>& filter,
+      const std::shared_ptr<NameMapping>& name_mapping) const;
 
  private:
   /// \brief Data file metadata.

@@ -257,12 +257,14 @@ Result<std::unique_ptr<TableScan>> TableScanBuilder::Build() {
 
   // Parse name mapping from table properties if available
   const auto& properties = table_metadata->properties;
-  if (auto it = properties.find(std::string(kNameMappingProperty)); it != properties.end()) {
+  if (auto it = properties.find(std::string(kNameMappingProperty));
+      it != properties.end()) {
     try {
       auto json = nlohmann::json::parse(it->second);
       ICEBERG_ASSIGN_OR_RAISE(context_.name_mapping, NameMappingFromJson(json));
     } catch (const std::exception& e) {
-      return InvalidArgument("Invalid name mapping JSON in table properties: {}", e.what());
+      return InvalidArgument("Invalid name mapping JSON in table properties: {}",
+                             e.what());
     }
   }
 
